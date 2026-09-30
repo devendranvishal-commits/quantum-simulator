@@ -174,4 +174,919 @@
     z-index: 2;
   }
   .dot { display: inline-block; width: 9px; height: 9px; border-radius: 50%; margin-right: 6px; vertical-align: middle; }
-  .hint3d { position:absolute; bottom:10px; right:12px;
+  .hint3d { position:absolute; bottom:10px; right:12px; font-size:0.7rem; color:var(--muted); background: rgba(5,6,13,0.7); padding:6px 10px; border-radius:8px; z-index:2; }
+</style>
+</head>
+<body>
+<canvas id="stars"></canvas>
+<div class="wrap">
+  <header>
+    <h1>Quantum Computer Simulator &amp; Molecular Docking</h1>
+    <p>Two from-scratch technical demos, running live in your browser — built by Vishal, Ohio State University</p>
+    <p style="font-size:0.8rem;">No servers, no external quantum/chem libraries — the math runs client-side in JavaScript.</p>
+  </header>
+
+  <div class="tabs">
+    <div class="tab active" data-tab="quantum">⚛ Quantum Simulator + QAOA</div>
+    <div class="tab" data-tab="docking">🧬 Molecular Docking</div>
+  </div>
+
+  <!-- QUANTUM TAB -->
+  <div id="tab-quantum">
+    <div class="card">
+      <h2>What this is <span class="badge">Statevector simulator</span></h2>
+      <p class="explain">
+        A genuine quantum computer simulator built from scratch: qubits, gate matrices (Hadamard, RX, RY, RZZ, etc.),
+        state-vector evolution, and measurement — all implemented directly with linear algebra, no Qiskit.
+        Below it runs <b>QAOA</b> (Quantum Approximate Optimization Algorithm), a real hybrid quantum-classical
+        algorithm, to solve a small <b>Max-Cut</b> problem: splitting delivery stops between two trucks to balance
+        their workload.
+      </p>
+      <div class="row">
+        <div>
+          <label>Number of delivery stops (qubits)</label>
+          <select id="qNodes">
+            <option value="4">4 stops</option>
+            <option value="5" selected>5 stops</option>
+            <option value="6">6 stops</option>
+          </select>
+        </div>
+        <div>
+          <label>QAOA layers (p)</label>
+          <select id="qLayers">
+            <option value="1">1</option>
+            <option value="2" selected>2</option>
+            <option value="3">3</option>
+          </select>
+        </div>
+        <div style="align-self:flex-end;">
+          <button id="runQuantum">Run Quantum Simulation</button>
+        </div>
+      </div>
+      <div id="qStatus" style="color:var(--muted); font-size:0.85rem; margin-bottom:8px;"></div>
+      <div id="qMapWrap" class="hidden" style="margin-top:16px;">
+        <div style="font-size:0.85rem; color:var(--muted); margin-bottom:8px;">
+          <span class="dot" style="background:#7c5cff;"></span>Truck 1 &nbsp;&nbsp;
+          <span class="dot" style="background:#22d3ee;"></span>Truck 2 &nbsp;&nbsp;
+          <span style="color:var(--muted);">— dashed route = split between trucks (a "cut" route)</span>
+        </div>
+        <svg id="qMap" width="100%" height="360" style="background:#05060d; border:1px solid var(--line); border-radius:12px;"></svg>
+      </div>
+      <div id="qOut" class="out hidden"></div>
+    </div>
+  </div>
+
+  <!-- DOCKING TAB -->
+  <div id="tab-docking" class="hidden">
+    <div class="card">
+      <h2>What this is <span class="badge">Lennard-Jones potential</span></h2>
+      <p class="explain">
+        A simplified molecular docking simulator: candidate "drug" molecules are rotated and translated against a
+        fixed protein binding pocket, scored using the <b>Lennard-Jones potential</b> (a real, standard approximation
+        used in computational chemistry), and ranked by predicted binding strength — the same core idea behind
+        early-stage computational drug discovery (AutoDock, Glide, etc.), simplified here to run instantly in-browser.
+      </p>
+      <div class="row">
+        <div style="align-self:flex-end;">
+          <button id="runDocking">Run Virtual Screening</button>
+        </div>
+      </div>
+      <div id="dStatus" style="color:var(--muted); font-size:0.85rem; margin-bottom:8px;"></div>
+      <div id="dOut"></div>
+      <div id="viewer3d" class="hidden">
+        <div class="legend3d">
+          <div><span class="dot" style="background:#ff5c5c;"></span>Oxygen</div>
+          <div><span class="dot" style="background:#9aa0c3;"></span>Carbon</div>
+          <div><span class="dot" style="background:#5c8bff;"></span>Nitrogen</div>
+          <div style="margin-top:6px; border-top:1px solid #2a2f52; padding-top:6px;">
+            <span class="dot" style="background:#7c5cff; opacity:0.5;"></span>Protein pocket (fixed)
+          </div>
+        </div>
+        <div class="hint3d">🖱 Drag to rotate · Scroll to zoom</div>
+        <div class="energy-badge" id="energyBadge"></div>
+      </div>
+    </div>
+  </div>
+
+  <footer>
+    Built by Vishal · Ohio State University ·
+    <a href="https://github.com/devendranvishal-commits/quantum-simulator" target="_blank">View source on GitHub</a>
+  </footer>
+</div>
+
+<script>
+/* ============================================================
+   STARFIELD BACKGROUND
+   ============================================================ */
+(function starfield() {
+  const canvas = document.getElementById('stars');
+  const ctx = canvas.getContext('2d');
+  let stars = [];
+  function resize() {
+    canvas.width = window.innerWidth;
+    canvas.height = window.innerHeight;
+    const count = Math.floor((canvas.width * canvas.height) / 9000);
+    stars = new Array(count).fill(null).map(() => ({
+      x: Math.random() * canvas.width,
+      y: Math.random() * canvas.height,
+      r: Math.random() * 1.3 + 0.2,
+      phase: Math.random() * Math.PI * 2,
+      speed: Math.random() * 0.015 + 0.005,
+    }));
+  }
+  window.addEventListener('resize', resize);
+  resize();
+  function tick(t) {
+    ctx.clearRect(0, 0, canvas.width, canvas.height);
+    for (const s of stars) {
+      const tw = 0.5 + 0.5 * Math.sin(t * s.speed + s.phase);
+      ctx.beginPath();
+      ctx.arc(s.x, s.y, s.r, 0, Math.PI * 2);
+      ctx.fillStyle = `rgba(180,190,255,${0.15 + tw * 0.55})`;
+      ctx.fill();
+    }
+    requestAnimationFrame(tick);
+  }
+  requestAnimationFrame(tick);
+})();
+
+/* ============================================================
+   TAB SWITCHING
+   ============================================================ */
+document.querySelectorAll('.tab').forEach(tab => {
+  tab.addEventListener('click', () => {
+    document.querySelectorAll('.tab').forEach(t => t.classList.remove('active'));
+    tab.classList.add('active');
+    document.getElementById('tab-quantum').classList.toggle('hidden', tab.dataset.tab !== 'quantum');
+    document.getElementById('tab-docking').classList.toggle('hidden', tab.dataset.tab !== 'docking');
+  });
+});
+
+/* ============================================================
+   PART 1: QUANTUM STATEVECTOR SIMULATOR + QAOA
+   Complex numbers as [re, im] pairs; statevector as flat array.
+   ============================================================ */
+
+function complexMul(a, b) { return [a[0]*b[0] - a[1]*b[1], a[0]*b[1] + a[1]*b[0]]; }
+function complexAdd(a, b) { return [a[0]+b[0], a[1]+b[1]]; }
+
+function initState(n) {
+  const dim = 1 << n;
+  const state = new Array(dim).fill(null).map(() => [0, 0]);
+  state[0] = [1, 0];
+  return state;
+}
+
+// Apply single-qubit gate (2x2 complex matrix) to qubit `q` of an n-qubit state
+function applySingleQubitGate(state, n, q, matrix) {
+  const dim = state.length;
+  const newState = new Array(dim).fill(null).map(() => [0, 0]);
+  const bit = 1 << q;
+  for (let i = 0; i < dim; i++) {
+    if ((i & bit) === 0) {
+      const i1 = i, i2 = i | bit;
+      const a0 = state[i1], a1 = state[i2];
+      newState[i1] = complexAdd(newState[i1], complexAdd(complexMul(matrix[0][0], a0), complexMul(matrix[0][1], a1)));
+      newState[i2] = complexAdd(newState[i2], complexAdd(complexMul(matrix[1][0], a0), complexMul(matrix[1][1], a1)));
+    }
+  }
+  return newState;
+}
+
+// Apply RZZ(theta) interaction gate between qubits q1,q2: phase exp(-i*theta/2 * z1*z2)
+function applyRZZ(state, n, q1, q2, theta) {
+  const dim = state.length;
+  const newState = state.slice();
+  for (let i = 0; i < dim; i++) {
+    const b1 = (i >> q1) & 1;
+    const b2 = (i >> q2) & 1;
+    const zz = (b1 === b2) ? 1 : -1;
+    const angle = -theta / 2 * zz;
+    const phase = [Math.cos(angle), Math.sin(angle)];
+    newState[i] = complexMul(state[i], phase);
+  }
+  return newState;
+}
+
+function hadamardMatrix() {
+  const s = 1 / Math.sqrt(2);
+  return [[[s,0],[s,0]], [[s,0],[-s,0]]];
+}
+function rxMatrix(theta) {
+  const c = Math.cos(theta/2), s = Math.sin(theta/2);
+  return [[[c,0],[0,-s]], [[0,-s],[c,0]]];
+}
+
+function probabilities(state) {
+  return state.map(c => c[0]*c[0] + c[1]*c[1]);
+}
+
+// Build a random weighted graph for max-cut (delivery stop distances)
+function buildGraph(n, seed) {
+  let s = seed;
+  function rand() { s = (s * 1103515245 + 12345) & 0x7fffffff; return s / 0x7fffffff; }
+  const edges = [];
+  for (let i = 0; i < n; i++) {
+    for (let j = i+1; j < n; j++) {
+      if (rand() < 0.65) edges.push([i, j, +(0.5 + rand()*1.5).toFixed(2)]);
+    }
+  }
+  // ensure connectivity
+  if (edges.length === 0) edges.push([0,1,1.0]);
+  return edges;
+}
+
+function cutValue(bitstring, edges) {
+  let cut = 0;
+  for (const [i,j,w] of edges) {
+    const bi = (bitstring >> i) & 1;
+    const bj = (bitstring >> j) & 1;
+    if (bi !== bj) cut += w;
+  }
+  return cut;
+}
+
+function bruteForceMaxCut(n, edges) {
+  let best = -Infinity, bestBit = 0;
+  for (let b = 0; b < (1<<n); b++) {
+    const v = cutValue(b, edges);
+    if (v > best) { best = v; bestBit = b; }
+  }
+  return { best, bestBit };
+}
+
+// Run QAOA: apply p layers of (cost unitary via RZZ) + (mixer via RX), sweeping angles,
+// pick best angle combo by expectation value (simple grid search — real, if simplified, optimization)
+function runQAOA(n, edges, p) {
+  let bestExpectation = -Infinity;
+  let bestState = null;
+  let bestParams = null;
+
+  const gammaSteps = 6, betaSteps = 6;
+  for (let gi = 0; gi < gammaSteps; gi++) {
+    for (let bi = 0; bi < betaSteps; bi++) {
+      const gamma = (gi / gammaSteps) * Math.PI;
+      const beta = (bi / betaSteps) * Math.PI / 2;
+
+      let state = initState(n);
+      for (let q = 0; q < n; q++) state = applySingleQubitGate(state, n, q, hadamardMatrix());
+
+      for (let layer = 0; layer < p; layer++) {
+        for (const [i,j,w] of edges) {
+          state = applyRZZ(state, n, i, j, gamma * w);
+        }
+        for (let q = 0; q < n; q++) {
+          state = applySingleQubitGate(state, n, q, rxMatrix(2*beta));
+        }
+      }
+
+      const probs = probabilities(state);
+      let expectation = 0;
+      for (let b = 0; b < probs.length; b++) {
+        expectation += probs[b] * cutValue(b, edges);
+      }
+
+      if (expectation > bestExpectation) {
+        bestExpectation = expectation;
+        bestState = state;
+        bestParams = { gamma, beta };
+      }
+    }
+  }
+
+  const probs = probabilities(bestState);
+  let mostLikely = 0;
+  for (let b = 1; b < probs.length; b++) if (probs[b] > probs[mostLikely]) mostLikely = b;
+
+  return { bestExpectation, probs, mostLikely, bestParams };
+}
+
+document.getElementById('runQuantum').addEventListener('click', async () => {
+  const n = parseInt(document.getElementById('qNodes').value);
+  const p = parseInt(document.getElementById('qLayers').value);
+  const statusEl = document.getElementById('qStatus');
+  const outEl = document.getElementById('qOut');
+  const btn = document.getElementById('runQuantum');
+
+  btn.disabled = true;
+  statusEl.textContent = 'Building state-vector, applying gates, running QAOA grid search...';
+  outEl.classList.add('hidden');
+  await new Promise(r => setTimeout(r, 30));
+
+  const t0 = performance.now();
+  const edges = buildGraph(n, 42 + n);
+  const { best: bruteBest, bestBit: bruteBit } = bruteForceMaxCut(n, edges);
+  const { bestExpectation, probs, mostLikely, bestParams } = runQAOA(n, edges, p);
+  const t1 = performance.now();
+
+  const qaoaCut = cutValue(mostLikely, edges);
+  const matches = qaoaCut >= bruteBest - 1e-9;
+
+  let lines = [];
+  lines.push(`Delivery stops: ${n}  |  Routes (edges): ${edges.length}  |  QAOA layers: p=${p}`);
+  lines.push(`Statevector dimension: 2^${n} = ${1<<n}`);
+  lines.push('');
+  lines.push('Edges (stop_i, stop_j, distance_weight):');
+  edges.forEach(([i,j,w]) => lines.push(`  (${i}, ${j})  weight=${w}`));
+  lines.push('');
+  lines.push(`Brute-force optimal split (ground truth): trucks = ${bruteBit.toString(2).padStart(n,'0')}  cut value = ${bruteBest.toFixed(2)}`);
+  lines.push(`QAOA best angles found: gamma=${bestParams.gamma.toFixed(3)}, beta=${bestParams.beta.toFixed(3)}`);
+  lines.push(`QAOA most likely measurement: trucks = ${mostLikely.toString(2).padStart(n,'0')}  cut value = ${qaoaCut.toFixed(2)}`);
+  lines.push(`Expected cut value over full distribution: ${bestExpectation.toFixed(3)}`);
+  lines.push('');
+  lines.push(matches ? '✓ QAOA found the OPTIMAL split — matches brute-force search.' : '~ QAOA found a near-optimal split (this is expected/realistic behavior of QAOA).');
+  lines.push('');
+  lines.push('Top measurement probabilities:');
+
+  const top = probs.map((p,i) => ({p, i})).sort((a,b) => b.p - a.p).slice(0, 6);
+  const maxP = top[0].p;
+  outEl.innerHTML = '';
+  const pre = document.createElement('div');
+  pre.textContent = lines.join('\n');
+  outEl.appendChild(pre);
+
+  top.forEach(({p, i}) => {
+    const row = document.createElement('div');
+    row.className = 'bar-row';
+    const pct = (p*100).toFixed(1);
+    const width = maxP > 0 ? (p/maxP*100) : 0;
+    row.innerHTML = `<div class="bar-label">trucks=${i.toString(2).padStart(n,'0')} (cut=${cutValue(i,edges).toFixed(2)})</div>
+      <div class="bar-track"><div class="bar-fill" style="width:${width}%"></div></div>
+      <div class="bar-val">${pct}%</div>`;
+    outEl.appendChild(row);
+  });
+
+  const timing = document.createElement('div');
+  timing.style.marginTop = '10px';
+  timing.style.color = '#9aa0c3';
+  timing.style.fontSize = '0.78rem';
+  timing.textContent = `Computed in ${(t1-t0).toFixed(1)}ms in your browser (${gammaSteps_text()}).`;
+  outEl.appendChild(timing);
+  function gammaSteps_text() { return '6×6 angle grid search per QAOA run'; }
+
+  outEl.classList.remove('hidden');
+  document.getElementById('qMapWrap').classList.remove('hidden');
+  renderTruckMap(n, edges, mostLikely);
+  statusEl.textContent = '';
+  btn.disabled = false;
+});
+
+/* ============================================================
+   TRUCK MAP (SVG) — visualizes the QAOA max-cut result:
+   which delivery stop goes on which truck, and which routes
+   end up "cut" (split between the two trucks).
+   ============================================================ */
+let truckMapAnimHandle = null;
+function renderTruckMap(n, edges, assignment) {
+  if (truckMapAnimHandle) cancelAnimationFrame(truckMapAnimHandle);
+
+  const svg = document.getElementById('qMap');
+  const svgNS = 'http://www.w3.org/2000/svg';
+  while (svg.firstChild) svg.removeChild(svg.firstChild);
+
+  const width = svg.clientWidth || 600;
+  const height = 360;
+  svg.setAttribute('viewBox', `0 0 ${width} ${height}`);
+
+  const defs = document.createElementNS(svgNS, 'defs');
+  const glow = document.createElementNS(svgNS, 'filter');
+  glow.setAttribute('id', 'nodeGlow');
+  glow.setAttribute('x', '-100%'); glow.setAttribute('y', '-100%');
+  glow.setAttribute('width', '300%'); glow.setAttribute('height', '300%');
+  const blur = document.createElementNS(svgNS, 'feGaussianBlur');
+  blur.setAttribute('stdDeviation', '4');
+  blur.setAttribute('result', 'blur');
+  const merge = document.createElementNS(svgNS, 'feMerge');
+  const mn1 = document.createElementNS(svgNS, 'feMergeNode'); mn1.setAttribute('in', 'blur');
+  const mn2 = document.createElementNS(svgNS, 'feMergeNode'); mn2.setAttribute('in', 'SourceGraphic');
+  merge.appendChild(mn1); merge.appendChild(mn2);
+  glow.appendChild(blur); glow.appendChild(merge);
+  defs.appendChild(glow);
+
+  [['grad0', '#7c5cff'], ['grad1', '#22d3ee']].forEach(([id, color]) => {
+    const g = document.createElementNS(svgNS, 'radialGradient');
+    g.setAttribute('id', id);
+    g.setAttribute('cx', '35%'); g.setAttribute('cy', '30%');
+    const s1 = document.createElementNS(svgNS, 'stop');
+    s1.setAttribute('offset', '0%'); s1.setAttribute('stop-color', '#ffffff');
+    const s2 = document.createElementNS(svgNS, 'stop');
+    s2.setAttribute('offset', '45%'); s2.setAttribute('stop-color', color);
+    const s3 = document.createElementNS(svgNS, 'stop');
+    s3.setAttribute('offset', '100%'); s3.setAttribute('stop-color', color); s3.setAttribute('stop-opacity', '0.7');
+    g.appendChild(s1); g.appendChild(s2); g.appendChild(s3);
+    defs.appendChild(g);
+  });
+  svg.appendChild(defs);
+
+  const cx = width / 2, cy = height / 2;
+  const radius = Math.min(width, height) / 2 - 60;
+  const positions = [];
+  for (let i = 0; i < n; i++) {
+    const angle = (i / n) * Math.PI * 2 - Math.PI / 2;
+    positions.push({ x: cx + radius * Math.cos(angle), y: cy + radius * Math.sin(angle) });
+  }
+
+  const truckColor = (bit) => bit === 0 ? '#7c5cff' : '#22d3ee';
+  const truckGrad = (bit) => bit === 0 ? 'url(#grad0)' : 'url(#grad1)';
+
+  const cutLines = [];
+
+  // draw edges first (so nodes sit on top)
+  edges.forEach(([i, j, w]) => {
+    const bi = (assignment >> i) & 1;
+    const bj = (assignment >> j) & 1;
+    const isCut = bi !== bj;
+    const line = document.createElementNS(svgNS, 'line');
+    line.setAttribute('x1', positions[i].x);
+    line.setAttribute('y1', positions[i].y);
+    line.setAttribute('x2', positions[j].x);
+    line.setAttribute('y2', positions[j].y);
+    line.setAttribute('stroke', isCut ? '#f59e0b' : '#2a2f52');
+    line.setAttribute('stroke-width', isCut ? 2.5 : 1.5);
+    if (isCut) {
+      line.setAttribute('stroke-dasharray', '6,5');
+      cutLines.push(line);
+    }
+    svg.appendChild(line);
+
+    // weight label at midpoint
+    const mx = (positions[i].x + positions[j].x) / 2;
+    const my = (positions[i].y + positions[j].y) / 2;
+    const label = document.createElementNS(svgNS, 'text');
+    label.setAttribute('x', mx);
+    label.setAttribute('y', my);
+    label.setAttribute('fill', '#5b6089');
+    label.setAttribute('font-size', '10');
+    label.setAttribute('text-anchor', 'middle');
+    label.textContent = w;
+    svg.appendChild(label);
+  });
+
+  // draw nodes with glow + gradient fill
+  positions.forEach((pos, i) => {
+    const bit = (assignment >> i) & 1;
+
+    const halo = document.createElementNS(svgNS, 'circle');
+    halo.setAttribute('cx', pos.x);
+    halo.setAttribute('cy', pos.y);
+    halo.setAttribute('r', 26);
+    halo.setAttribute('fill', truckColor(bit));
+    halo.setAttribute('opacity', '0.25');
+    halo.setAttribute('filter', 'url(#nodeGlow)');
+    svg.appendChild(halo);
+
+    const circle = document.createElementNS(svgNS, 'circle');
+    circle.setAttribute('cx', pos.x);
+    circle.setAttribute('cy', pos.y);
+    circle.setAttribute('r', 22);
+    circle.setAttribute('fill', truckGrad(bit));
+    circle.setAttribute('stroke', '#05060d');
+    circle.setAttribute('stroke-width', 3);
+    svg.appendChild(circle);
+
+    const label = document.createElementNS(svgNS, 'text');
+    label.setAttribute('x', pos.x);
+    label.setAttribute('y', pos.y + 5);
+    label.setAttribute('fill', '#05060d');
+    label.setAttribute('font-size', '13');
+    label.setAttribute('font-weight', '800');
+    label.setAttribute('text-anchor', 'middle');
+    label.textContent = 'S' + i;
+    svg.appendChild(label);
+  });
+
+  // animate "flowing route" dashes along the cut edges — gives a live, moving feel
+  let offset = 0;
+  function animateFlow() {
+    offset = (offset - 0.6) % 11;
+    cutLines.forEach(line => line.setAttribute('stroke-dashoffset', offset));
+    truckMapAnimHandle = requestAnimationFrame(animateFlow);
+  }
+  if (cutLines.length) animateFlow();
+}
+
+/* ============================================================
+   PART 2: MOLECULAR DOCKING SIMULATOR (Lennard-Jones)
+   ============================================================ */
+
+const CARBON = { r: 1.7, w: 0.10 };
+const OXYGEN = { r: 1.52, w: 0.20 };
+const NITROGEN = { r: 1.55, w: 0.16 };
+
+function atom(x,y,z,kind) { return { x, y, z, r: kind.r, w: kind.w }; }
+
+const PROTEIN_POCKET = [
+  atom(0,0,0, OXYGEN),
+  atom(3,0,0, CARBON),
+  atom(0,3,0, CARBON),
+  atom(0,0,3, NITROGEN),
+  atom(2,2,2, CARBON),
+  atom(-2,1,1, OXYGEN),
+];
+
+const CANDIDATES = {
+  "Molecule A (small, oxygen-rich)": [
+    atom(0,0,0, OXYGEN), atom(1.4,0,0, CARBON), atom(0,1.4,0, OXYGEN),
+  ],
+  "Molecule B (bulky, carbon chain)": [
+    atom(0,0,0, CARBON), atom(1.5,0,0, CARBON), atom(3.0,0,0, CARBON), atom(4.5,0,0, CARBON),
+  ],
+  "Molecule C (nitrogen-containing)": [
+    atom(0,0,0, NITROGEN), atom(1.4,0,0, CARBON), atom(1.4,1.4,0, CARBON),
+  ],
+};
+
+function ljEnergy(protein, ligand) {
+  let total = 0;
+  for (const p of protein) {
+    for (const l of ligand) {
+      const dx = p.x - l.x, dy = p.y - l.y, dz = p.z - l.z;
+      let dist = Math.sqrt(dx*dx + dy*dy + dz*dz);
+      if (dist < 1e-6) dist = 1e-6;
+      const sigma = (p.r + l.r) / 2;
+      const epsilon = Math.sqrt(p.w * l.w);
+      const ratio = sigma / dist;
+      total += 4 * epsilon * (Math.pow(ratio,12) - Math.pow(ratio,6));
+    }
+  }
+  return total;
+}
+
+function rotatePoint(x, y, z, rx, ry, rz) {
+  // rotate around x
+  let y1 = y*Math.cos(rx) - z*Math.sin(rx);
+  let z1 = y*Math.sin(rx) + z*Math.cos(rx);
+  // around y
+  let x2 = x*Math.cos(ry) + z1*Math.sin(ry);
+  let z2 = -x*Math.sin(ry) + z1*Math.cos(ry);
+  // around z
+  let x3 = x2*Math.cos(rz) - y1*Math.sin(rz);
+  let y3 = x2*Math.sin(rz) + y1*Math.cos(rz);
+  return [x3, y3, z2];
+}
+
+function transformLigand(ligand, params) {
+  const [tx,ty,tz,rx,ry,rz] = params;
+  return ligand.map(a => {
+    const [x,y,z] = rotatePoint(a.x, a.y, a.z, rx, ry, rz);
+    return { x: x+tx, y: y+ty, z: z+tz, r: a.r, w: a.w };
+  });
+}
+
+function mulberry32(seed) {
+  return function() {
+    seed |= 0; seed = (seed + 0x6D2B79F5) | 0;
+    let t = Math.imul(seed ^ seed >>> 15, 1 | seed);
+    t = t + Math.imul(t ^ t >>> 7, 61 | t) ^ t;
+    return ((t ^ t >>> 14) >>> 0) / 4294967296;
+  };
+}
+
+// Simple random-restart local search (stand-in for scipy.optimize used in the Python version)
+function dock(protein, ligand, seed) {
+  const rand = mulberry32(seed);
+  let best = Infinity, bestParams = null;
+
+  for (let restart = 0; restart < 10; restart++) {
+    let params = [
+      (rand()-0.5)*2, (rand()-0.5)*2, (rand()-0.5)*2,
+      rand()*Math.PI*2, rand()*Math.PI*2, rand()*Math.PI*2
+    ];
+    let energy = ljEnergy(protein, transformLigand(ligand, params));
+
+    let stepSize = 0.5;
+    for (let iter = 0; iter < 300; iter++) {
+      const trial = params.map(p => p + (rand()-0.5)*stepSize);
+      const trialEnergy = ljEnergy(protein, transformLigand(ligand, trial));
+      if (trialEnergy < energy) {
+        energy = trialEnergy;
+        params = trial;
+      }
+      stepSize *= 0.985;
+    }
+
+    if (energy < best) { best = energy; bestParams = params; }
+  }
+  return { energy: best, params: bestParams, pose: transformLigand(ligand, bestParams) };
+}
+
+document.getElementById('runDocking').addEventListener('click', async () => {
+  const statusEl = document.getElementById('dStatus');
+  const outEl = document.getElementById('dOut');
+  const btn = document.getElementById('runDocking');
+
+  btn.disabled = true;
+  statusEl.textContent = 'Searching poses (translation + rotation) for each candidate molecule...';
+  outEl.innerHTML = '';
+  await new Promise(r => setTimeout(r, 30));
+
+  const t0 = performance.now();
+  const results = [];
+  let i = 0;
+  for (const [name, ligand] of Object.entries(CANDIDATES)) {
+    const { energy, pose } = dock(PROTEIN_POCKET, ligand, 7 + i*13);
+    results.push({ name, energy, pose });
+    i++;
+  }
+  const t1 = performance.now();
+
+  results.sort((a,b) => a.energy - b.energy);
+
+  const intro = document.createElement('div');
+  intro.className = 'out';
+  intro.style.marginBottom = '14px';
+  intro.textContent = `Protein binding pocket: ${PROTEIN_POCKET.length} atoms\nScreened ${results.length} candidate molecules (lower/more negative = tighter fit)\nComputed in ${(t1-t0).toFixed(0)}ms in your browser.`;
+  outEl.appendChild(intro);
+
+  const rankDivs = [];
+  results.forEach((r, idx) => {
+    const div = document.createElement('div');
+    div.className = 'rank' + (idx === 0 ? ' selected' : '');
+    div.innerHTML = `<div><span class="num">#${idx+1}</span>${r.name}</div><div style="font-family:monospace; color:var(--accent2)">${r.energy.toFixed(3)}</div>`;
+    div.addEventListener('click', () => {
+      rankDivs.forEach(d => d.classList.remove('selected'));
+      div.classList.add('selected');
+      render3D(r.pose, r.energy);
+    });
+    outEl.appendChild(div);
+    rankDivs.push(div);
+  });
+
+  const winner = document.createElement('div');
+  winner.style.marginTop = '10px';
+  winner.style.color = 'var(--good)';
+  winner.style.fontWeight = '700';
+  winner.textContent = `→ ${results[0].name} is predicted to bind most tightly to this pocket — top candidate for further testing. Click any row above to view its 3D pose.`;
+  outEl.appendChild(winner);
+
+  document.getElementById('viewer3d').classList.remove('hidden');
+  init3D();
+  render3D(results[0].pose, results[0].energy);
+
+  statusEl.textContent = '';
+  btn.disabled = false;
+});
+
+/* ============================================================
+   3D VIEWER (Three.js)
+   ============================================================ */
+let scene3d, camera3d, renderer3d, worldGroup3d, ligandGroup3d;
+let camDistance3d = 12;
+let camTheta3d = 0.7, camPhi3d = 1.1; // spherical angles for camera orbit
+let isDragging3d = false, lastX3d = 0, lastY3d = 0;
+
+function updateCamera3d() {
+  camera3d.position.x = camDistance3d * Math.sin(camPhi3d) * Math.cos(camTheta3d);
+  camera3d.position.z = camDistance3d * Math.sin(camPhi3d) * Math.sin(camTheta3d);
+  camera3d.position.y = camDistance3d * Math.cos(camPhi3d);
+  camera3d.lookAt(0, 0, 0);
+}
+
+function atomColor(kind) {
+  if (kind === OXYGEN) return 0xff5c5c;
+  if (kind === CARBON) return 0x9aa0c3;
+  if (kind === NITROGEN) return 0x5c8bff;
+  return 0xffffff;
+}
+function atomLabel(kind) {
+  if (kind === OXYGEN) return 'O';
+  if (kind === CARBON) return 'C';
+  if (kind === NITROGEN) return 'N';
+  return '?';
+}
+function kindOf(a) {
+  if (a.r === OXYGEN.r && a.w === OXYGEN.w) return OXYGEN;
+  if (a.r === NITROGEN.r && a.w === NITROGEN.w) return NITROGEN;
+  return CARBON;
+}
+
+// Round glow sprite texture, reused for every atom's soft "bloom" halo
+let glowTexture3d = null;
+function getGlowTexture() {
+  if (glowTexture3d) return glowTexture3d;
+  const size = 128;
+  const c = document.createElement('canvas');
+  c.width = c.height = size;
+  const ctx = c.getContext('2d');
+  const grad = ctx.createRadialGradient(size/2, size/2, 0, size/2, size/2, size/2);
+  grad.addColorStop(0, 'rgba(255,255,255,0.9)');
+  grad.addColorStop(0.4, 'rgba(255,255,255,0.25)');
+  grad.addColorStop(1, 'rgba(255,255,255,0)');
+  ctx.fillStyle = grad;
+  ctx.fillRect(0, 0, size, size);
+  glowTexture3d = new THREE.CanvasTexture(c);
+  return glowTexture3d;
+}
+
+function makeLabelSprite(text, color) {
+  const size = 64;
+  const c = document.createElement('canvas');
+  c.width = c.height = size;
+  const ctx = c.getContext('2d');
+  ctx.font = 'bold 40px sans-serif';
+  ctx.textAlign = 'center';
+  ctx.textBaseline = 'middle';
+  ctx.fillStyle = color;
+  ctx.shadowColor = 'rgba(0,0,0,0.9)';
+  ctx.shadowBlur = 8;
+  ctx.fillText(text, size/2, size/2 + 2);
+  const tex = new THREE.CanvasTexture(c);
+  const mat = new THREE.SpriteMaterial({ map: tex, transparent: true, depthTest: false });
+  const sprite = new THREE.Sprite(mat);
+  sprite.scale.set(0.5, 0.5, 0.5);
+  return sprite;
+}
+
+function addAtomGlow(group, position, colorHex, scale) {
+  const mat = new THREE.SpriteMaterial({
+    map: getGlowTexture(),
+    color: colorHex,
+    transparent: true,
+    opacity: 0.5,
+    blending: THREE.AdditiveBlending,
+    depthWrite: false,
+  });
+  const sprite = new THREE.Sprite(mat);
+  sprite.position.copy(position);
+  sprite.scale.set(scale, scale, scale);
+  group.add(sprite);
+}
+
+function init3D() {
+  if (renderer3d) return; // already initialized
+  const container = document.getElementById('viewer3d');
+  const width = container.clientWidth || 600, height = container.clientHeight || 440;
+
+  scene3d = new THREE.Scene();
+  scene3d.fog = new THREE.FogExp2(0x05060d, 0.045);
+  camera3d = new THREE.PerspectiveCamera(45, width/height, 0.1, 100);
+  updateCamera3d();
+
+  renderer3d = new THREE.WebGLRenderer({ antialias: true, alpha: true });
+  renderer3d.setSize(width, height);
+  renderer3d.shadowMap.enabled = true;
+  renderer3d.shadowMap.type = THREE.PCFSoftShadowMap;
+  if (renderer3d.outputColorSpace !== undefined) renderer3d.outputColorSpace = THREE.SRGBColorSpace;
+  container.appendChild(renderer3d.domElement);
+
+  const ambient = new THREE.AmbientLight(0xffffff, 0.45);
+  scene3d.add(ambient);
+
+  const key = new THREE.PointLight(0xffffff, 1.1, 60);
+  key.position.set(8, 12, 10);
+  key.castShadow = true;
+  key.shadow.mapSize.set(1024, 1024);
+  scene3d.add(key);
+
+  // colored rim light for a "cool" sci-fi accent
+  const rim = new THREE.PointLight(0x7c5cff, 0.9, 40);
+  rim.position.set(-10, 4, -8);
+  scene3d.add(rim);
+  const rim2 = new THREE.PointLight(0x22d3ee, 0.6, 40);
+  rim2.position.set(6, -6, 8);
+  scene3d.add(rim2);
+
+  worldGroup3d = new THREE.Group();
+  scene3d.add(worldGroup3d);
+
+  // reflective-ish floor grid for grounding/depth
+  const floorGeo = new THREE.PlaneGeometry(40, 40);
+  const floorMat = new THREE.MeshStandardMaterial({ color: 0x0a0e22, metalness: 0.3, roughness: 0.8 });
+  const floor = new THREE.Mesh(floorGeo, floorMat);
+  floor.rotation.x = -Math.PI / 2;
+  floor.position.y = -4.2;
+  floor.receiveShadow = true;
+  worldGroup3d.add(floor);
+  const grid = new THREE.GridHelper(40, 40, 0x2a2f52, 0x161b36);
+  grid.position.y = -4.19;
+  worldGroup3d.add(grid);
+
+  // Protein pocket (fixed, semi-transparent bigger spheres with soft glow halos)
+  PROTEIN_POCKET.forEach(a => {
+    const kind = kindOf(a);
+    const geo = new THREE.SphereGeometry(0.45, 32, 32);
+    const mat = new THREE.MeshPhysicalMaterial({
+      color: atomColor(kind), transparent: true, opacity: 0.5,
+      roughness: 0.25, metalness: 0.1, clearcoat: 0.6, clearcoatRoughness: 0.2,
+    });
+    const mesh = new THREE.Mesh(geo, mat);
+    mesh.position.set(a.x, a.y, a.z);
+    mesh.castShadow = true;
+    worldGroup3d.add(mesh);
+    addAtomGlow(worldGroup3d, mesh.position, atomColor(kind), 1.6);
+  });
+  // faint pulsing wireframe sphere marking the binding pocket volume
+  const sphereGeo = new THREE.SphereGeometry(5, 24, 24);
+  const sphereMat = new THREE.MeshBasicMaterial({ color: 0x7c5cff, wireframe: true, transparent: true, opacity: 0.12 });
+  const pocketSphere = new THREE.Mesh(sphereGeo, sphereMat);
+  worldGroup3d.add(pocketSphere);
+  window.__pocketSphere3d = pocketSphere;
+
+  ligandGroup3d = new THREE.Group();
+  worldGroup3d.add(ligandGroup3d);
+
+  // --- manual drag-to-rotate controls (mouse + touch) ---
+  const dom = renderer3d.domElement;
+  dom.style.cursor = 'grab';
+
+  function onDown(x, y) { isDragging3d = true; lastX3d = x; lastY3d = y; dom.style.cursor = 'grabbing'; }
+  function onMove(x, y) {
+    if (!isDragging3d) return;
+    const dx = x - lastX3d, dy = y - lastY3d;
+    camTheta3d -= dx * 0.008;
+    camPhi3d = Math.max(0.2, Math.min(Math.PI - 0.2, camPhi3d - dy * 0.008));
+    lastX3d = x; lastY3d = y;
+    updateCamera3d();
+  }
+  function onUp() { isDragging3d = false; dom.style.cursor = 'grab'; }
+
+  dom.addEventListener('mousedown', e => onDown(e.clientX, e.clientY));
+  window.addEventListener('mousemove', e => onMove(e.clientX, e.clientY));
+  window.addEventListener('mouseup', onUp);
+
+  dom.addEventListener('touchstart', e => { const t = e.touches[0]; onDown(t.clientX, t.clientY); }, { passive: true });
+  dom.addEventListener('touchmove', e => { const t = e.touches[0]; onMove(t.clientX, t.clientY); }, { passive: true });
+  dom.addEventListener('touchend', onUp);
+
+  dom.addEventListener('wheel', e => {
+    e.preventDefault();
+    camDistance3d = Math.max(5, Math.min(30, camDistance3d + e.deltaY * 0.01));
+    updateCamera3d();
+  }, { passive: false });
+
+  window.addEventListener('resize', () => {
+    const w = container.clientWidth, h = container.clientHeight;
+    camera3d.aspect = w/h;
+    camera3d.updateProjectionMatrix();
+    renderer3d.setSize(w, h);
+  });
+
+  let autoRotate = true;
+  dom.addEventListener('mousedown', () => { autoRotate = false; });
+  dom.addEventListener('touchstart', () => { autoRotate = false; });
+
+  let clock3d = 0;
+  function animate() {
+    requestAnimationFrame(animate);
+    clock3d += 0.016;
+    if (autoRotate && !isDragging3d) {
+      camTheta3d += 0.003;
+      updateCamera3d();
+    }
+    if (window.__pocketSphere3d) {
+      const pulse = 1 + Math.sin(clock3d * 1.2) * 0.03;
+      window.__pocketSphere3d.scale.set(pulse, pulse, pulse);
+      window.__pocketSphere3d.material.opacity = 0.08 + Math.sin(clock3d * 1.2) * 0.04;
+    }
+    renderer3d.render(scene3d, camera3d);
+  }
+  animate();
+}
+
+function render3D(pose, energy) {
+  // clear previous ligand atoms/bonds
+  while (ligandGroup3d.children.length) ligandGroup3d.remove(ligandGroup3d.children[0]);
+
+  pose.forEach(a => {
+    const kind = kindOf(a);
+    const geo = new THREE.SphereGeometry(0.3, 32, 32);
+    const mat = new THREE.MeshPhysicalMaterial({
+      color: atomColor(kind), roughness: 0.2, metalness: 0.15,
+      clearcoat: 0.8, clearcoatRoughness: 0.15, emissive: atomColor(kind), emissiveIntensity: 0.12,
+    });
+    const mesh = new THREE.Mesh(geo, mat);
+    mesh.position.set(a.x, a.y, a.z);
+    mesh.castShadow = true;
+    mesh.receiveShadow = true;
+    ligandGroup3d.add(mesh);
+    addAtomGlow(ligandGroup3d, mesh.position, atomColor(kind), 0.9);
+
+    const label = makeLabelSprite(atomLabel(kind), '#ffffff');
+    label.position.set(a.x, a.y + 0.5, a.z);
+    ligandGroup3d.add(label);
+  });
+
+  // simple sequential bonds between ligand atoms (toy molecules are defined as chains)
+  for (let i = 0; i < pose.length - 1; i++) {
+    const a = pose[i], b = pose[i+1];
+    const start = new THREE.Vector3(a.x, a.y, a.z);
+    const end = new THREE.Vector3(b.x, b.y, b.z);
+    const dir = new THREE.Vector3().subVectors(end, start);
+    const length = dir.length();
+    const cylGeo = new THREE.CylinderGeometry(0.09, 0.09, length, 12);
+    const cylMat = new THREE.MeshPhysicalMaterial({ color: 0xdadfff, roughness: 0.35, metalness: 0.4, clearcoat: 0.5 });
+    const cyl = new THREE.Mesh(cylGeo, cylMat);
+    cyl.castShadow = true;
+    cyl.position.copy(start).add(end).multiplyScalar(0.5);
+    cyl.quaternion.setFromUnitVectors(new THREE.Vector3(0,1,0), dir.clone().normalize());
+    ligandGroup3d.add(cyl);
+  }
+
+  const badge = document.getElementById('energyBadge');
+  if (badge && typeof energy === 'number') {
+    badge.textContent = `Binding energy: ${energy.toFixed(3)}`;
+  }
+}
+</script>
+</body>
+</html>
