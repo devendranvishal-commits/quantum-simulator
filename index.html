@@ -4,8 +4,7 @@
 <meta charset="UTF-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1.0" />
 <title>Quantum Simulator & Molecular Docking — Vishal, OSU</title>
-<script src="https://cdn.jsdelivr.net/npm/three@0.128.0/build/three.min.js"></script>
-<script src="https://cdn.jsdelivr.net/npm/three@0.128.0/examples/js/controls/OrbitControls.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
 <style>
   :root {
     --bg: #0b0d17;
@@ -702,7 +701,17 @@ document.getElementById('runDocking').addEventListener('click', async () => {
 /* ============================================================
    3D VIEWER (Three.js)
    ============================================================ */
-let scene3d, camera3d, renderer3d, controls3d, ligandGroup3d;
+let scene3d, camera3d, renderer3d, worldGroup3d, ligandGroup3d;
+let camDistance3d = 12;
+let camTheta3d = 0.7, camPhi3d = 1.1; // spherical angles for camera orbit
+let isDragging3d = false, lastX3d = 0, lastY3d = 0;
+
+function updateCamera3d() {
+  camera3d.position.x = camDistance3d * Math.sin(camPhi3d) * Math.cos(camTheta3d);
+  camera3d.position.z = camDistance3d * Math.sin(camPhi3d) * Math.sin(camTheta3d);
+  camera3d.position.y = camDistance3d * Math.cos(camPhi3d);
+  camera3d.lookAt(0, 0, 0);
+}
 
 function atomColor(kind) {
   if (kind === OXYGEN) return 0xff5c5c;
@@ -719,26 +728,24 @@ function kindOf(a) {
 function init3D() {
   if (renderer3d) return; // already initialized
   const container = document.getElementById('viewer3d');
-  const width = container.clientWidth, height = container.clientHeight;
+  const width = container.clientWidth || 600, height = container.clientHeight || 420;
 
   scene3d = new THREE.Scene();
   camera3d = new THREE.PerspectiveCamera(45, width/height, 0.1, 100);
-  camera3d.position.set(6, 5, 9);
+  updateCamera3d();
 
   renderer3d = new THREE.WebGLRenderer({ antialias: true, alpha: true });
   renderer3d.setSize(width, height);
   container.appendChild(renderer3d.domElement);
-
-  controls3d = new THREE.OrbitControls(camera3d, renderer3d.domElement);
-  controls3d.enableDamping = true;
-  controls3d.autoRotate = true;
-  controls3d.autoRotateSpeed = 1.2;
 
   const ambient = new THREE.AmbientLight(0xffffff, 0.65);
   scene3d.add(ambient);
   const point = new THREE.PointLight(0xffffff, 0.9);
   point.position.set(8, 10, 10);
   scene3d.add(point);
+
+  worldGroup3d = new THREE.Group();
+  scene3d.add(worldGroup3d);
 
   // Protein pocket (fixed, semi-transparent bigger spheres)
   PROTEIN_POCKET.forEach(a => {
@@ -747,15 +754,44 @@ function init3D() {
     const mat = new THREE.MeshStandardMaterial({ color: atomColor(kind), transparent: true, opacity: 0.55, roughness: 0.4 });
     const mesh = new THREE.Mesh(geo, mat);
     mesh.position.set(a.x, a.y, a.z);
-    scene3d.add(mesh);
+    worldGroup3d.add(mesh);
   });
   // faint bounding wireframe box for orientation
   const boxGeo = new THREE.BoxGeometry(8,8,8);
   const boxMat = new THREE.MeshBasicMaterial({ color: 0x2a2f52, wireframe: true, transparent: true, opacity: 0.25 });
-  scene3d.add(new THREE.Mesh(boxGeo, boxMat));
+  worldGroup3d.add(new THREE.Mesh(boxGeo, boxMat));
 
   ligandGroup3d = new THREE.Group();
-  scene3d.add(ligandGroup3d);
+  worldGroup3d.add(ligandGroup3d);
+
+  // --- manual drag-to-rotate controls (mouse + touch) ---
+  const dom = renderer3d.domElement;
+  dom.style.cursor = 'grab';
+
+  function onDown(x, y) { isDragging3d = true; lastX3d = x; lastY3d = y; dom.style.cursor = 'grabbing'; }
+  function onMove(x, y) {
+    if (!isDragging3d) return;
+    const dx = x - lastX3d, dy = y - lastY3d;
+    camTheta3d -= dx * 0.008;
+    camPhi3d = Math.max(0.2, Math.min(Math.PI - 0.2, camPhi3d - dy * 0.008));
+    lastX3d = x; lastY3d = y;
+    updateCamera3d();
+  }
+  function onUp() { isDragging3d = false; dom.style.cursor = 'grab'; }
+
+  dom.addEventListener('mousedown', e => onDown(e.clientX, e.clientY));
+  window.addEventListener('mousemove', e => onMove(e.clientX, e.clientY));
+  window.addEventListener('mouseup', onUp);
+
+  dom.addEventListener('touchstart', e => { const t = e.touches[0]; onDown(t.clientX, t.clientY); }, { passive: true });
+  dom.addEventListener('touchmove', e => { const t = e.touches[0]; onMove(t.clientX, t.clientY); }, { passive: true });
+  dom.addEventListener('touchend', onUp);
+
+  dom.addEventListener('wheel', e => {
+    e.preventDefault();
+    camDistance3d = Math.max(5, Math.min(30, camDistance3d + e.deltaY * 0.01));
+    updateCamera3d();
+  }, { passive: false });
 
   window.addEventListener('resize', () => {
     const w = container.clientWidth, h = container.clientHeight;
@@ -764,9 +800,16 @@ function init3D() {
     renderer3d.setSize(w, h);
   });
 
+  let autoRotate = true;
+  dom.addEventListener('mousedown', () => { autoRotate = false; });
+  dom.addEventListener('touchstart', () => { autoRotate = false; });
+
   function animate() {
     requestAnimationFrame(animate);
-    controls3d.update();
+    if (autoRotate && !isDragging3d) {
+      camTheta3d += 0.003;
+      updateCamera3d();
+    }
     renderer3d.render(scene3d, camera3d);
   }
   animate();
