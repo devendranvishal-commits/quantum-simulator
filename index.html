@@ -4,6 +4,8 @@
 <meta charset="UTF-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1.0" />
 <title>Quantum Simulator & Molecular Docking — Vishal, OSU</title>
+<script src="https://cdn.jsdelivr.net/npm/three@0.128.0/build/three.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/three@0.128.0/examples/js/controls/OrbitControls.js"></script>
 <style>
   :root {
     --bg: #0b0d17;
@@ -113,8 +115,33 @@
   footer { text-align: center; color: var(--muted); font-size: 0.8rem; margin-top: 40px; }
   a { color: var(--accent2); }
   .hidden { display: none; }
-  .rank { border-radius: 12px; padding: 12px 16px; margin-bottom: 10px; background: var(--panel2); border: 1px solid var(--line); display: flex; justify-content: space-between; align-items: center; }
-  .rank .num { font-weight: 800; color: var(--accent2); margin-right: 12px; }
+  .rank { border-radius: 12px; padding: 12px 16px; margin-bottom: 10px; background: var(--panel2); border: 1px solid var(--line); display: flex; justify-content: space-between; align-items: center; cursor: pointer; transition: border-color 0.15s; }
+  .rank:hover { border-color: var(--accent2); }
+  .rank.selected { border-color: var(--accent2); box-shadow: 0 0 0 1px var(--accent2); }
+  #viewer3d {
+    width: 100%;
+    height: 420px;
+    border-radius: 12px;
+    background: #05060d;
+    border: 1px solid var(--line);
+    margin-top: 14px;
+    position: relative;
+    overflow: hidden;
+  }
+  .legend3d {
+    position: absolute;
+    top: 10px;
+    left: 12px;
+    font-size: 0.75rem;
+    color: var(--muted);
+    background: rgba(5,6,13,0.7);
+    padding: 8px 12px;
+    border-radius: 10px;
+    line-height: 1.7;
+    z-index: 2;
+  }
+  .dot { display: inline-block; width: 9px; height: 9px; border-radius: 50%; margin-right: 6px; vertical-align: middle; }
+  .hint3d { position:absolute; bottom:10px; right:12px; font-size:0.7rem; color:var(--muted); background: rgba(5,6,13,0.7); padding:6px 10px; border-radius:8px; z-index:2; }
 </style>
 </head>
 <body>
@@ -163,6 +190,14 @@
         </div>
       </div>
       <div id="qStatus" style="color:var(--muted); font-size:0.85rem; margin-bottom:8px;"></div>
+      <div id="qMapWrap" class="hidden" style="margin-top:16px;">
+        <div style="font-size:0.85rem; color:var(--muted); margin-bottom:8px;">
+          <span class="dot" style="background:#7c5cff;"></span>Truck 1 &nbsp;&nbsp;
+          <span class="dot" style="background:#22d3ee;"></span>Truck 2 &nbsp;&nbsp;
+          <span style="color:var(--muted);">— dashed route = split between trucks (a "cut" route)</span>
+        </div>
+        <svg id="qMap" width="100%" height="360" style="background:#05060d; border:1px solid var(--line); border-radius:12px;"></svg>
+      </div>
       <div id="qOut" class="out hidden"></div>
     </div>
   </div>
@@ -184,6 +219,17 @@
       </div>
       <div id="dStatus" style="color:var(--muted); font-size:0.85rem; margin-bottom:8px;"></div>
       <div id="dOut"></div>
+      <div id="viewer3d" class="hidden">
+        <div class="legend3d">
+          <div><span class="dot" style="background:#ff5c5c;"></span>Oxygen</div>
+          <div><span class="dot" style="background:#9aa0c3;"></span>Carbon</div>
+          <div><span class="dot" style="background:#5c8bff;"></span>Nitrogen</div>
+          <div style="margin-top:6px; border-top:1px solid #2a2f52; padding-top:6px;">
+            <span class="dot" style="background:#7c5cff; opacity:0.5;"></span>Protein pocket (fixed)
+          </div>
+        </div>
+        <div class="hint3d">🖱 Drag to rotate · Scroll to zoom</div>
+      </div>
     </div>
   </div>
 
@@ -409,9 +455,87 @@ document.getElementById('runQuantum').addEventListener('click', async () => {
   function gammaSteps_text() { return '6×6 angle grid search per QAOA run'; }
 
   outEl.classList.remove('hidden');
+  document.getElementById('qMapWrap').classList.remove('hidden');
+  renderTruckMap(n, edges, mostLikely);
   statusEl.textContent = '';
   btn.disabled = false;
 });
+
+/* ============================================================
+   TRUCK MAP (SVG) — visualizes the QAOA max-cut result:
+   which delivery stop goes on which truck, and which routes
+   end up "cut" (split between the two trucks).
+   ============================================================ */
+function renderTruckMap(n, edges, assignment) {
+  const svg = document.getElementById('qMap');
+  const svgNS = 'http://www.w3.org/2000/svg';
+  while (svg.firstChild) svg.removeChild(svg.firstChild);
+
+  const width = svg.clientWidth || 600;
+  const height = 360;
+  svg.setAttribute('viewBox', `0 0 ${width} ${height}`);
+
+  const cx = width / 2, cy = height / 2;
+  const radius = Math.min(width, height) / 2 - 60;
+  const positions = [];
+  for (let i = 0; i < n; i++) {
+    const angle = (i / n) * Math.PI * 2 - Math.PI / 2;
+    positions.push({ x: cx + radius * Math.cos(angle), y: cy + radius * Math.sin(angle) });
+  }
+
+  const truckColor = (bit) => bit === 0 ? '#7c5cff' : '#22d3ee';
+
+  // draw edges first (so nodes sit on top)
+  edges.forEach(([i, j, w]) => {
+    const bi = (assignment >> i) & 1;
+    const bj = (assignment >> j) & 1;
+    const isCut = bi !== bj;
+    const line = document.createElementNS(svgNS, 'line');
+    line.setAttribute('x1', positions[i].x);
+    line.setAttribute('y1', positions[i].y);
+    line.setAttribute('x2', positions[j].x);
+    line.setAttribute('y2', positions[j].y);
+    line.setAttribute('stroke', isCut ? '#f59e0b' : '#2a2f52');
+    line.setAttribute('stroke-width', isCut ? 2.5 : 1.5);
+    if (isCut) line.setAttribute('stroke-dasharray', '6,5');
+    svg.appendChild(line);
+
+    // weight label at midpoint
+    const mx = (positions[i].x + positions[j].x) / 2;
+    const my = (positions[i].y + positions[j].y) / 2;
+    const label = document.createElementNS(svgNS, 'text');
+    label.setAttribute('x', mx);
+    label.setAttribute('y', my);
+    label.setAttribute('fill', '#5b6089');
+    label.setAttribute('font-size', '10');
+    label.setAttribute('text-anchor', 'middle');
+    label.textContent = w;
+    svg.appendChild(label);
+  });
+
+  // draw nodes
+  positions.forEach((pos, i) => {
+    const bit = (assignment >> i) & 1;
+    const circle = document.createElementNS(svgNS, 'circle');
+    circle.setAttribute('cx', pos.x);
+    circle.setAttribute('cy', pos.y);
+    circle.setAttribute('r', 22);
+    circle.setAttribute('fill', truckColor(bit));
+    circle.setAttribute('stroke', '#05060d');
+    circle.setAttribute('stroke-width', 3);
+    svg.appendChild(circle);
+
+    const label = document.createElementNS(svgNS, 'text');
+    label.setAttribute('x', pos.x);
+    label.setAttribute('y', pos.y + 5);
+    label.setAttribute('fill', '#05060d');
+    label.setAttribute('font-size', '13');
+    label.setAttribute('font-weight', '800');
+    label.setAttribute('text-anchor', 'middle');
+    label.textContent = 'S' + i;
+    svg.appendChild(label);
+  });
+}
 
 /* ============================================================
    PART 2: MOLECULAR DOCKING SIMULATOR (Lennard-Jones)
@@ -515,7 +639,7 @@ function dock(protein, ligand, seed) {
 
     if (energy < best) { best = energy; bestParams = params; }
   }
-  return { energy: best, params: bestParams };
+  return { energy: best, params: bestParams, pose: transformLigand(ligand, bestParams) };
 }
 
 document.getElementById('runDocking').addEventListener('click', async () => {
@@ -532,8 +656,8 @@ document.getElementById('runDocking').addEventListener('click', async () => {
   const results = [];
   let i = 0;
   for (const [name, ligand] of Object.entries(CANDIDATES)) {
-    const { energy } = dock(PROTEIN_POCKET, ligand, 7 + i*13);
-    results.push({ name, energy });
+    const { energy, pose } = dock(PROTEIN_POCKET, ligand, 7 + i*13);
+    results.push({ name, energy, pose });
     i++;
   }
   const t1 = performance.now();
@@ -546,23 +670,136 @@ document.getElementById('runDocking').addEventListener('click', async () => {
   intro.textContent = `Protein binding pocket: ${PROTEIN_POCKET.length} atoms\nScreened ${results.length} candidate molecules (lower/more negative = tighter fit)\nComputed in ${(t1-t0).toFixed(0)}ms in your browser.`;
   outEl.appendChild(intro);
 
+  const rankDivs = [];
   results.forEach((r, idx) => {
     const div = document.createElement('div');
-    div.className = 'rank';
+    div.className = 'rank' + (idx === 0 ? ' selected' : '');
     div.innerHTML = `<div><span class="num">#${idx+1}</span>${r.name}</div><div style="font-family:monospace; color:var(--accent2)">${r.energy.toFixed(3)}</div>`;
+    div.addEventListener('click', () => {
+      rankDivs.forEach(d => d.classList.remove('selected'));
+      div.classList.add('selected');
+      render3D(r.pose);
+    });
     outEl.appendChild(div);
+    rankDivs.push(div);
   });
 
   const winner = document.createElement('div');
   winner.style.marginTop = '10px';
   winner.style.color = 'var(--good)';
   winner.style.fontWeight = '700';
-  winner.textContent = `→ ${results[0].name} is predicted to bind most tightly to this pocket — top candidate for further testing.`;
+  winner.textContent = `→ ${results[0].name} is predicted to bind most tightly to this pocket — top candidate for further testing. Click any row above to view its 3D pose.`;
   outEl.appendChild(winner);
+
+  document.getElementById('viewer3d').classList.remove('hidden');
+  init3D();
+  render3D(results[0].pose);
 
   statusEl.textContent = '';
   btn.disabled = false;
 });
+
+/* ============================================================
+   3D VIEWER (Three.js)
+   ============================================================ */
+let scene3d, camera3d, renderer3d, controls3d, ligandGroup3d;
+
+function atomColor(kind) {
+  if (kind === OXYGEN) return 0xff5c5c;
+  if (kind === CARBON) return 0x9aa0c3;
+  if (kind === NITROGEN) return 0x5c8bff;
+  return 0xffffff;
+}
+function kindOf(a) {
+  if (a.r === OXYGEN.r && a.w === OXYGEN.w) return OXYGEN;
+  if (a.r === NITROGEN.r && a.w === NITROGEN.w) return NITROGEN;
+  return CARBON;
+}
+
+function init3D() {
+  if (renderer3d) return; // already initialized
+  const container = document.getElementById('viewer3d');
+  const width = container.clientWidth, height = container.clientHeight;
+
+  scene3d = new THREE.Scene();
+  camera3d = new THREE.PerspectiveCamera(45, width/height, 0.1, 100);
+  camera3d.position.set(6, 5, 9);
+
+  renderer3d = new THREE.WebGLRenderer({ antialias: true, alpha: true });
+  renderer3d.setSize(width, height);
+  container.appendChild(renderer3d.domElement);
+
+  controls3d = new THREE.OrbitControls(camera3d, renderer3d.domElement);
+  controls3d.enableDamping = true;
+  controls3d.autoRotate = true;
+  controls3d.autoRotateSpeed = 1.2;
+
+  const ambient = new THREE.AmbientLight(0xffffff, 0.65);
+  scene3d.add(ambient);
+  const point = new THREE.PointLight(0xffffff, 0.9);
+  point.position.set(8, 10, 10);
+  scene3d.add(point);
+
+  // Protein pocket (fixed, semi-transparent bigger spheres)
+  PROTEIN_POCKET.forEach(a => {
+    const kind = kindOf(a);
+    const geo = new THREE.SphereGeometry(0.45, 24, 24);
+    const mat = new THREE.MeshStandardMaterial({ color: atomColor(kind), transparent: true, opacity: 0.55, roughness: 0.4 });
+    const mesh = new THREE.Mesh(geo, mat);
+    mesh.position.set(a.x, a.y, a.z);
+    scene3d.add(mesh);
+  });
+  // faint bounding wireframe box for orientation
+  const boxGeo = new THREE.BoxGeometry(8,8,8);
+  const boxMat = new THREE.MeshBasicMaterial({ color: 0x2a2f52, wireframe: true, transparent: true, opacity: 0.25 });
+  scene3d.add(new THREE.Mesh(boxGeo, boxMat));
+
+  ligandGroup3d = new THREE.Group();
+  scene3d.add(ligandGroup3d);
+
+  window.addEventListener('resize', () => {
+    const w = container.clientWidth, h = container.clientHeight;
+    camera3d.aspect = w/h;
+    camera3d.updateProjectionMatrix();
+    renderer3d.setSize(w, h);
+  });
+
+  function animate() {
+    requestAnimationFrame(animate);
+    controls3d.update();
+    renderer3d.render(scene3d, camera3d);
+  }
+  animate();
+}
+
+function render3D(pose) {
+  // clear previous ligand atoms/bonds
+  while (ligandGroup3d.children.length) ligandGroup3d.remove(ligandGroup3d.children[0]);
+
+  pose.forEach(a => {
+    const kind = kindOf(a);
+    const geo = new THREE.SphereGeometry(0.3, 24, 24);
+    const mat = new THREE.MeshStandardMaterial({ color: atomColor(kind), roughness: 0.3, metalness: 0.1 });
+    const mesh = new THREE.Mesh(geo, mat);
+    mesh.position.set(a.x, a.y, a.z);
+    ligandGroup3d.add(mesh);
+  });
+
+  // simple sequential bonds between ligand atoms (toy molecules are defined as chains)
+  for (let i = 0; i < pose.length - 1; i++) {
+    const a = pose[i], b = pose[i+1];
+    const start = new THREE.Vector3(a.x, a.y, a.z);
+    const end = new THREE.Vector3(b.x, b.y, b.z);
+    const dir = new THREE.Vector3().subVectors(end, start);
+    const length = dir.length();
+    const cylGeo = new THREE.CylinderGeometry(0.08, 0.08, length, 8);
+    const cylMat = new THREE.MeshStandardMaterial({ color: 0xcccccc });
+    const cyl = new THREE.Mesh(cylGeo, cylMat);
+    cyl.position.copy(start).add(end).multiplyScalar(0.5);
+    cyl.quaternion.setFromUnitVectors(new THREE.Vector3(0,1,0), dir.clone().normalize());
+    ligandGroup3d.add(cyl);
+  }
+}
 </script>
 </body>
 </html>
